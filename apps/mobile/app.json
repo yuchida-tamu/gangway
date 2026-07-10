@@ -1,0 +1,21 @@
+{
+  "expo": {
+    "name": "Gangway Demo",
+    "slug": "gangway-demo",
+    "version": "1.0.0",
+    "scheme": "gangway",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "dev.yuchida.gangwaydemo"
+    },
+    "plugins": ["expo-router"]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "gangway-monorepo",
+  "private": true,
+  "version": "0.0.1",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "dev:server": "npm run dev --workspace apps/server",
+    "dev:mobile": "npm run start --workspace apps/mobile",
+    "test:e2e": "npm run test:e2e --workspace apps/server"
+  },
+  "devDependencies": {
+    "typescript": "~5.8.3"
+  }
+}

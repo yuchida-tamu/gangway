@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@demo/server": ["../server/src/index.ts"]
+    }
+  },
+  "include": ["app", "src", "expo-env.d.ts"]
+}

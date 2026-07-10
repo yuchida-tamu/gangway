@@ -1,0 +1,23 @@
+{
+  "name": "@gangway-demo/server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test:e2e": "tsx test/e2e.ts"
+  },
+  "dependencies": {
+    "@gangway/protocol": "*",
+    "@gangway/server": "*",
+    "@hono/node-server": "^1.14.0",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@gangway/client": "*",
+    "@types/node": "^26.1.1",
+    "tsx": "^4.19.0"
+  }
+}
