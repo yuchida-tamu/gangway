@@ -301,15 +301,19 @@ Publishing real npm packages will need a build step — irrelevant at this stage
 ```sh
 npm install
 npm run typecheck        # all workspaces
-npm run test:e2e         # 10-scenario protocol test (client core vs real BFF over HTTP)
+npm run test:e2e         # 14-scenario protocol test (client core vs real BFF over HTTP)
 npm run dev:server       # BFF on :3939 (open in a browser for the debug HTML view)
 npm run dev:mobile       # Expo dev server; press i for iOS simulator
 npm run export -w apps/mobile   # Metro/Hermes bundle check without a device
 ```
 
-Demo walkthrough on device: Home (stats) → View orders → order → Archive (POST → 303 →
-back on refreshed list) → New order (server-declared modal; submit empty to see 422 errors) →
-Labs (missing-component fallback) → VIP (409 update-required fallback).
+**Two test suites — run both to call a change safe:**
+- `npm run test:e2e` — headless protocol test (client core vs. BFF); catches client-logic
+  regressions fast, no simulator.
+- **`E2E.md`** — the on-device scenario runbook (simulator + Expo Go, driven with
+  `agent-device`). Catches RN-integration breakage the headless test can't see: navigation,
+  modal presentation, form rendering, fallbacks, on-device rehydration. Each device scenario
+  names the protocol scenario it mirrors.
 
 ## 11. Roadmap & open questions
 

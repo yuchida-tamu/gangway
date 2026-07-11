@@ -11,10 +11,14 @@ layer boundaries, the version-skew strategy, and the roadmap.
 
 ```sh
 npm install
-npm run test:e2e      # protocol e2e: client core vs real BFF over HTTP
+npm run test:e2e      # headless protocol e2e: client core vs real BFF over HTTP
 npm run dev:server    # demo BFF on http://localhost:3939 (browser gets a debug view)
 npm run dev:mobile    # Expo dev server (run the BFF first)
 ```
+
+Two test suites guard the project: the headless `npm run test:e2e`, and the on-device
+scenario runbook in **[E2E.md](./E2E.md)** (simulator + Expo Go). Run both before landing a
+change.
 
 ## Layout
 
