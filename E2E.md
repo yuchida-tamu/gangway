@@ -17,6 +17,36 @@ it exercises something the Node test can't reach).
 
 ---
 
+## 0. Automated harness (the fast path)
+
+Most of this doc is executed for you by **`scripts/e2e-device.sh`** — it drives the scenarios
+via `agent-device` and prints pass/fail per scenario, exiting non-zero if any fail.
+
+```sh
+# Prereqs: an iOS simulator booted, agent-device on PATH, Metro reachable (or it will start it).
+npm run test:e2e:device            # restarts the BFF, reuses/starts Metro, cold-boots, runs all
+npm run test:e2e:device -- --keep  # same, but leave the servers running afterward
+ONLY="A1 A2 B3" bash scripts/e2e-device.sh   # run just some scenarios (fast iteration)
+```
+
+The harness owns the **BFF** (restarts it each run so orders reseed deterministically and its
+request log is captured to `/tmp/gangway-e2e-bff.log`) and asserts on that log to prove
+cache/rehydration behavior. It **reuses** an already-running Metro on `:8081`, or starts one.
+Scenarios that need a JS reload (E1) briefly append a line to `apps/mobile/src/gangway.ts` and
+revert it via an EXIT trap.
+
+The rest of this doc is the **manual/reference** form: the exact steps, selectors, and expected
+results the harness automates — read it to debug a failure or to add a scenario (then add the
+matching `scn_*` function to the script).
+
+**Gotchas the harness already handles** (worth knowing if you drive by hand): a stale
+`agent-device` session must be cleared with `close --session default` before `open`, or
+snapshots return empty; a FlatList row is a `[scroll-area]` whose child `[cell]` reads "same
+label as parent", so press the interactive node *at or after* the labelled line, not the
+scroll-area; the Expo dev menu can overlay a cold boot and must be dismissed first.
+
+---
+
 ## 1. Prerequisites
 
 - Xcode iOS simulator available; an iPhone booted (`xcrun simctl list devices booted`).

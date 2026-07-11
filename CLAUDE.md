@@ -10,10 +10,13 @@ truth** — read it before changing protocol or navigation behavior; update it w
 - `npm run test:e2e` — the headless protocol test (`apps/server/test/e2e.ts`). Run after ANY
   change to packages/protocol, packages/server, or packages/client/src/core.ts. Extend it when
   adding protocol features.
-- **`E2E.md`** — the on-device scenario runbook (simulator + Expo Go, driven with
-  `agent-device`). Run after changes to the RN integration layer (bindings.tsx, the adapter,
-  `apps/mobile` routes/screens) — the headless test can't catch those. Add a scenario there
-  when adding a user-facing flow. Both suites should pass before a change is "safe".
+- `npm run test:e2e:device` — the on-device suite: `scripts/e2e-device.sh` drives the demo app
+  in the simulator via `agent-device` and reports pass/fail per scenario (docs: **`E2E.md`**).
+  Run after changes to the RN integration layer (bindings.tsx, the adapter, `apps/mobile`
+  routes/screens) — the headless test can't catch those. Needs a booted simulator + Metro; it
+  owns/restarts the BFF. `ONLY="A1 B3" bash scripts/e2e-device.sh` runs a subset. Add a `scn_*`
+  function (and an `E2E.md` scenario) when adding a user-facing flow. Both suites should pass
+  before a change is "safe".
 - `npm run dev:server` — demo BFF on :3939.
 - `npm run export -w apps/mobile` — Metro/Hermes bundle check without a simulator.
 
