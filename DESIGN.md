@@ -336,12 +336,16 @@ npm run dev:mobile       # Expo dev server; press i for iOS simulator
 npm run export -w apps/mobile   # Metro/Hermes bundle check without a device
 ```
 
-**Two test suites — run both to call a change safe:**
-- `npm run test:e2e` — headless protocol test (client core vs. BFF); catches client-logic
-  regressions fast, no simulator.
+**Three test suites — the confidence ladder:**
+- `npm run test:unit` — Vitest unit tests over `packages/**` (client core state machine, server
+  helpers, protocol guards). Fastest, fully isolated (injected fetch + fake router, Hono
+  `app.request()`), no BFF or simulator. First line of defense for framework-package changes.
+  (Setup + roadmap: issue #10; React-hook tests for `bindings.tsx` are a follow-up.)
+- `npm run test:e2e` — headless protocol *integration* test (client core vs. a real BFF over
+  HTTP); catches wiring the units mock out.
 - **`E2E.md`** — the on-device scenario runbook (simulator + Expo Go, driven with
-  `agent-device`). Catches RN-integration breakage the headless test can't see: navigation,
-  modal presentation, form rendering, fallbacks, on-device rehydration. Each device scenario
+  `agent-device`). Catches RN-integration breakage the other two can't see: navigation, modal
+  presentation, form rendering, fallbacks, rehydration, in-place actions. Each device scenario
   names the protocol scenario it mirrors.
 
 ## 11. Roadmap & open questions

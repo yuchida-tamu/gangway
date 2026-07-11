@@ -7,9 +7,12 @@ truth** — read it before changing protocol or navigation behavior; update it w
 
 - `npm run typecheck` — tsc across all workspaces (editor tsserver diagnostics in this repo
   are unreliable for the RN app; trust the CLI).
-- `npm run test:e2e` — the headless protocol test (`apps/server/test/e2e.ts`). Run after ANY
-  change to packages/protocol, packages/server, or packages/client/src/core.ts. Extend it when
-  adding protocol features.
+- `npm run test:unit` — Vitest unit tests (`packages/**/*.test.ts`): client core state machine,
+  server helpers, protocol guards. Fast, isolated (injected fetch + fake router; Hono
+  `app.request()`), no simulator/BFF. Run + extend after ANY change to a framework package.
+  `npm run test:unit:watch` for TDD. Tracking/roadmap: issue #10.
+- `npm run test:e2e` — the headless protocol integration test (`apps/server/test/e2e.ts`): the
+  real client core vs. a real BFF over HTTP. Extend it when adding protocol features.
 - `npm run test:e2e:device` — the on-device suite: `scripts/e2e-device.sh` drives the demo app
   in the simulator via `agent-device` and reports pass/fail per scenario (docs: **`E2E.md`**).
   Run after changes to the RN integration layer (bindings.tsx, the adapter, `apps/mobile`
