@@ -175,8 +175,26 @@ decides what screen comes back:
 ```
 
 Props: `href` (BFF URL), `intent?` (`NavAction` — the server can still override), `style?`,
-`disabled?`, `children`. Note: `Link` currently discards the visit result — a failed visit
-is silent ([issue #5](https://github.com/yuchida-tamu/gangway/issues/5)).
+`disabled?`, `prefetch?` (default `true`), `children`. Note: `Link` currently discards the visit
+result — a failed visit is silent ([issue #5](https://github.com/yuchida-tamu/gangway/issues/5)).
+
+**Perceived latency** ([issue #1](https://github.com/yuchida-tamu/gangway/issues/1)): `Link`
+starts the GET on `onPressIn`, so by `onPress` the response is usually in flight or cached — a
+warm cache pushes in the same frame. While a *cold* visit is still fetching the link dims
+(`opacity: 0.5`) as an in-flight affordance. Pass `prefetch={false}` to opt a link out of
+press-in prefetching. See [prefetch](client-core.md#prefetch--stale-while-revalidate).
+
+## `usePrefetch()`
+
+```tsx
+const prefetch = usePrefetch()
+// e.g. warm a row's target as it scrolls into view
+<Order onVisible={() => prefetch(`/orders/${id}`)} />
+```
+
+Returns `(url) => void` that speculatively fetches and caches a URL's page (silent — never
+navigates or surfaces errors). `Link` uses it on press-in; call it directly for viewport-based
+or hover-style prefetching. Backed by [`client.prefetch`](client-core.md#prefetchurl).
 
 ## `useGangway()`
 

@@ -351,6 +351,44 @@ scn_I1_in_place_action() {
   fi
 }
 
+# J — prefetch on press-in + stale-while-revalidate (issue #1). The demo client
+# uses a 60s revalidate window so a just-visited screen stays warm within a run.
+scn_J1_warm_nav() {
+  step "J1 · warm forward-nav pushes with 0 requests (URL cache)"
+  ensure_bff >/dev/null 2>&1
+  cold_boot >/dev/null 2>&1 || { fail "J1 cold boot"; return; }
+  press_until "View orders" "Aluminum extrusions" || { fail "J1 setup: reach Orders"; return; }
+  press_until "Aluminum extrusions" "Amount: ¥1,200" || { fail "J1 setup: first visit"; return; }
+  press_back || { fail "J1 back"; return; }
+  assert_text "Aluminum extrusions" 5000 || { fail "J1 back to list"; return; }
+  # Second forward-nav to the SAME url — served from the cache seeded by the
+  # first visit / press-in prefetch. No BFF request.
+  local m; m="$(bff_mark)"
+  press_until "Aluminum extrusions" "Amount: ¥1,200" || { fail "J1 second visit"; return; }
+  if bff_no_reqs "$m"; then
+    pass "J1 repeat forward-nav served from cache (0 requests)"
+  else
+    fail "J1 warm nav still hit the BFF"
+  fi
+}
+
+scn_J2_prefetch_dedup() {
+  step "J2 · press-in prefetch + press visit = one GET (dedup)"
+  ensure_bff >/dev/null 2>&1
+  cold_boot >/dev/null 2>&1 || { fail "J2 cold boot"; return; }
+  press_until "View orders" "Aluminum extrusions" || { fail "J2 setup: reach Orders"; return; }
+  # First tap on a cold order: onPressIn prefetches, onPress visits — fetchDedup
+  # must coalesce them into exactly ONE GET /orders/1.
+  local m; m="$(bff_mark)"
+  press_until "Aluminum extrusions" "Amount: ¥1,200" || { fail "J2 visit"; return; }
+  local n; n="$(bff_since "$m" | grep -cE '<-- GET /orders/1$')"
+  if [ "$n" -eq 1 ]; then
+    pass "J2 exactly one GET /orders/1 (prefetch + visit coalesced)"
+  else
+    fail "J2 expected one GET /orders/1, saw $n"
+  fi
+}
+
 # ---- run ------------------------------------------------------------------
 echo "${YLW}=== Gangway on-device E2E ===${RST}"
 ensure_bff
@@ -360,7 +398,7 @@ cold_boot || { echo "${RED}cold boot failed — aborting${RST}"; exit 2; }
 # ONLY="A1 A2" limits the run to those scenarios (fast iteration); default = all.
 ALL_SCN=(A1_home A2_orders A3_detail B1_archive B2_modal B3_validation B4_create \
          C1_cache D1_missing_component D2_update_required E1_rehydrate E2_cache_after_rehydrate \
-         G1_stale_cache H1_client_animation I1_in_place_action)
+         G1_stale_cache H1_client_animation I1_in_place_action J1_warm_nav J2_prefetch_dedup)
 for s in "${ALL_SCN[@]}"; do
   if [[ -n "${ONLY:-}" ]]; then
     key="${s%%_*}"; [[ " $ONLY " == *" $key "* ]] || continue

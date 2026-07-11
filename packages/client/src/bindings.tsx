@@ -126,6 +126,17 @@ export function useVisit() {
 }
 
 /**
+ * Speculative prefetch — warm the cache for a URL before the user commits to
+ * navigating (e.g. on press-in, or as list rows become visible). Silent: never
+ * navigates, never surfaces errors. A following visit() to the same URL reuses
+ * the in-flight or cached result. `Link` calls this on press-in automatically.
+ */
+export function usePrefetch() {
+  const { client } = useGangway()
+  return useCallback((url: string) => client.prefetch(url), [client])
+}
+
+/**
  * In-place server action — the escape hatch from navigation. `run(url, data)`
  * POSTs to a route and returns the server's raw JSON (via ActionResult); the
  * component updates its own state and animates on the result, with no

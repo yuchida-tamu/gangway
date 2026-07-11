@@ -17,12 +17,18 @@ const { app } = await import('../src/index')
 const PORT = 4949
 const server = serve({ fetch: app.fetch, port: PORT })
 
-function makeClient(bundleVersion: string) {
+function makeClient(bundleVersion: string, extra: { revalidateAfterMs?: number } = {}) {
   const nav: Array<{ action: NavAction; key: string; url: string }> = []
   const drifts: string[] = []
   const updates: UpdateRequired[] = []
   const router: RouterAdapter = {
     apply: (action, key, url) => nav.push({ action, key, url }),
+  }
+  // Count real BFF round-trips (headless has no request log like the device suite).
+  const reqs: string[] = []
+  const countingFetch: typeof fetch = (input, init) => {
+    reqs.push(String(input))
+    return fetch(input, init)
   }
   const client = new GangwayClient({
     baseUrl: `http://localhost:${PORT}`,
@@ -31,8 +37,10 @@ function makeClient(bundleVersion: string) {
     router,
     onVersionDrift: (v) => drifts.push(v),
     onUpdateRequired: (i) => updates.push(i),
+    revalidateAfterMs: extra.revalidateAfterMs,
+    fetch: countingFetch,
   })
-  return { client, nav, drifts, updates }
+  return { client, nav, drifts, updates, reqs }
 }
 
 async function main() {
@@ -154,7 +162,48 @@ async function main() {
   const react2 = await client.action<{ reactions: number }>('/orders/1/react')
   assert(react2.ok && react2.data.reactions === 2, 'action increments server state across calls')
 
-  console.log('✔ all 15 protocol scenarios passed')
+  // 16. Prefetch then visit = ONE BFF round-trip; visit is served from cache.
+  const pf = makeClient('1', { revalidateAfterMs: 60_000 })
+  await pf.client.prefetch('/orders')
+  const afterPrefetch = pf.reqs.length
+  const served = await pf.client.visit('/orders')
+  assert(served.ok, 'visit after prefetch should succeed')
+  assert.equal(served.page.component, 'Orders/Index')
+  assert.equal(served.fromCache, true, 'visit should be served from the prefetch cache')
+  assert.equal(pf.reqs.length, afterPrefetch, 'a warm visit must not hit the BFF again')
+  assert.equal(afterPrefetch, 1, 'prefetch is exactly one round-trip')
+
+  // 17. A warm re-visit within the revalidate window makes 0 extra requests.
+  const before17 = pf.reqs.length
+  const revisit = await pf.client.visit('/orders')
+  assert(revisit.ok && revisit.fromCache === true)
+  assert.equal(pf.reqs.length, before17, 'fresh warm re-visit = 0 requests')
+
+  // 18. Stale-while-revalidate: serve immediately, refetch in the background,
+  //     swap props in place with NO extra navigation.
+  const sw = makeClient('1', { revalidateAfterMs: 0 }) // every cached entry is stale
+  const first = await sw.client.visit('/orders') // cold → cache + commit
+  assert(first.ok)
+  const navBefore = sw.nav.length
+  const reqBefore = sw.reqs.length
+  const stale = await sw.client.visit('/orders') // warm+stale → commit now + revalidate
+  assert(stale.ok && stale.fromCache === true)
+  assert.equal(sw.nav.length, navBefore + 1, 'revalidation must not add a navigation')
+  // the background revalidate fires exactly one extra request
+  await new Promise((r) => setTimeout(r, 50))
+  assert.equal(sw.reqs.length, reqBefore + 1, 'stale visit triggers one background refetch')
+
+  // 19. A mutation clears the URL cache, so the next GET re-fetches.
+  const mu = makeClient('1', { revalidateAfterMs: 60_000 })
+  await mu.client.visit('/orders') // caches /orders
+  await mu.client.visit('/orders/2/archive', { method: 'POST' }) // mutation → clear
+  const before19 = mu.reqs.length
+  const afterMutation = await mu.client.visit('/orders')
+  assert(afterMutation.ok)
+  assert.equal(afterMutation.fromCache, undefined, 'cache was cleared by the mutation')
+  assert.equal(mu.reqs.length, before19 + 1, 'post-mutation GET re-fetches')
+
+  console.log('✔ all 19 protocol scenarios passed')
   server.close()
 }
 

@@ -64,6 +64,15 @@ Action mapping: `push` → `router.push`, `replace` → `router.replace`, `modal
 `router.push` on the `/m/` route, `resetTo` → `dismissAll()` + `replace`, `back` →
 `router.back()`.
 
+### Same-frame push on a warm cache
+
+Two caches make navigation feel native. **Back** pops to a previous *key* whose page is still in
+the store (no refetch). **Forward** navigation to a URL that's in the prefetch cache (seeded by
+`Link`'s press-in prefetch or a prior visit) calls `router.apply` **synchronously** — the push
+starts the same frame as the tap — and, if the entry is stale, revalidates in the background and
+swaps the fresh props into the mounted screen via the store, without a second navigation. See
+[prefetch & stale-while-revalidate](client-core.md#prefetch--stale-while-revalidate).
+
 ## The boot screen
 
 Something has to perform the first visit. The convention is a minimal `app/index.tsx` that

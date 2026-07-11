@@ -28,6 +28,8 @@ interface GangwayClientConfig {
   router: RouterAdapter
   onVersionDrift?: (serverVersion: string) => void
   onUpdateRequired?: (info: UpdateRequired) => void
+  revalidateAfterMs?: number   // stale-while-revalidate window; default 3000
+  maxCachedPages?: number      // prefetch cache cap; default 50
   fetch?: typeof fetch
 }
 ```
@@ -40,6 +42,8 @@ interface GangwayClientConfig {
 | `router` | The [navigation adapter](navigation.md); use `createExpoRouterAdapter()` or your own. |
 | `onVersionDrift` | Fired when a page object's `version` ≠ `bundleVersion`. Wire `Updates.checkForUpdateAsync()` here for background self-healing. Not an error — the page still renders. |
 | `onUpdateRequired` | Fired on a 409 update gate. Wire `Updates.fetchUpdateAsync()` + `reloadAsync()` here. |
+| `revalidateAfterMs` | Stale-while-revalidate window (ms, default 3000). A URL-cached page younger than this is served on `visit` with no refetch; an older one is served immediately **and** revalidated in the background. See [Prefetch](#prefetch--stale-while-revalidate). |
+| `maxCachedPages` | Max distinct URLs kept in the prefetch cache (default 50); oldest evicted first. |
 | `fetch` | Custom fetch — the injection point for auth headers, and for tests. |
 
 ## Visits
@@ -116,6 +120,34 @@ type ActionResult<T = unknown> =
 Note the trade-off: action results live in *component* state, not the page store, so a
 re-render after store loss shows the page object's (possibly older) props until the screen
 refetches. Prefer visits + `reload` when the data belongs to the page.
+
+## Prefetch & stale-while-revalidate
+
+To hide the navigation round-trip, the client keeps a small **URL-indexed cache** next to the
+key store (additive — it never affects back-nav or rehydration).
+
+### `prefetch(url)`
+
+Speculatively fetch and cache a URL's page — call it before the user commits to navigating
+(on press-in, or as list rows scroll into view). Silent by design: it never navigates and
+never fires `onUpdateRequired`, so a stray press-in can't surprise the user. A following
+`visit` to the same URL reuses the in-flight or cached result (one round-trip, not two).
+[`<Link>`](react.md#link) calls this on `onPressIn` for you; [`usePrefetch()`](react.md#useprefetch)
+exposes it directly.
+
+### How `visit` uses the cache
+
+- **Warm hit** — the page is cached: `visit` navigates **synchronously** (the push starts the
+  same frame as the tap) and returns `{ ok: true, fromCache: true, ... }`. If the entry is older
+  than `revalidateAfterMs`, it's also **revalidated in the background** — the fresh page is
+  swapped into the live screen via the store (no second navigation).
+- **Cold / in-flight** — no cache: `visit` awaits the fetch (reusing a press-in prefetch if one
+  is in flight), then navigates as usual and caches the result.
+- **Mutations** (non-GET `visit`) clear the whole URL cache afterward — a write may have changed
+  anything, so nothing stale is served.
+
+Tune freshness with `revalidateAfterMs` (default 3000) and bound memory with `maxCachedPages`
+(default 50). ETag/`Cache-Control`-driven TTLs and smarter (targeted) invalidation are future work.
 
 ## The page store
 

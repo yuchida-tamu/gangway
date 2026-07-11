@@ -23,6 +23,10 @@ export const gangway = new GangwayClient({
   bundleVersion: BUNDLE_VERSION,
   runtimeVersion: Constants.expoConfig?.runtimeVersion?.toString() ?? 'dev',
   router: createExpoRouterAdapter(),
+  // Prefetch-on-press-in + stale-while-revalidate (issue #1). A generous window
+  // keeps a just-visited screen warm (repeat forward-nav pushes same-frame with
+  // no refetch) — a real app would tune this per data freshness.
+  revalidateAfterMs: 60_000,
   onVersionDrift: (serverVersion) => {
     // Real app: Updates.checkForUpdateAsync() → fetch in background,
     // apply on next launch. Demo just logs.

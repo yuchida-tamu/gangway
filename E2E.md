@@ -240,6 +240,28 @@ agent-device snapshot -i        # if a dev menu shows, press its "Close"/"Contin
   page-object model for like/toggle/counter widgets. The animation is client-side; the value it
   animates to comes from the server.
 
+### Group J — Prefetch on press-in + stale-while-revalidate (issue #1)
+
+The demo client sets `revalidateAfterMs: 60000`, so a just-visited screen stays warm within a run.
+
+**J1. Warm forward-nav pushes with zero requests** · _device-only; mirrors unit "warm cache"_
+- Pre: reseed the BFF; cold boot.
+- Do: View orders → tap an order (first visit) → back to the list → tap the **same** order again.
+- Expect: the detail renders and the BFF gets **zero** requests since the mark before the second
+  tap — the URL-indexed cache (seeded by the first visit + press-in prefetch) serves it, and the
+  push fires in the same frame. This is the headline perceived-latency win.
+
+**J2. press-in prefetch + press visit = one GET** · _device-only; proves `fetchDedup`_
+- Pre: reseed the BFF; cold boot; on the Orders list.
+- Do: tap a **cold** order once.
+- Expect: the BFF log shows **exactly one** `GET /orders/N` — `onPressIn` (prefetch) and
+  `onPress` (visit) coalesce into a single round-trip, never two.
+
+**J3. Cold-cache in-flight affordance** · _manual visual check_
+- On a genuinely cold tap (throttled network, cache cleared), the `Link` dims (opacity 0.5) while
+  the GET is in flight, then the screen pushes. A transient dim isn't reliably snapshot-assertable,
+  so verify by eye; J1/J2 cover the automatable behavior.
+
 ---
 
 ## 5. Smoke path (minimal ordered run)

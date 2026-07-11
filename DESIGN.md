@@ -277,6 +277,39 @@ lives in component state, so it is **not** part of the page-object cache — on 
 a cached screen it shows whatever the page props held (see the staleness note, §11). For values
 that must survive back-nav, put them in page props and refresh via `reload`.
 
+### 6.3 Prefetch + stale-while-revalidate (perceived latency)
+
+A visit is a network round-trip *before* the push animation — on mobile, that's a dead frame
+after the tap. Gangway closes the gap with a **URL-indexed cache** (`urlCache: Map<url,{page,at}>`)
+that lives *alongside* the key store (additive; back-nav and rehydration are untouched):
+
+- **`Link` starts the GET on `onPressIn`** via `prefetch(url)` (hook: `usePrefetch`). By the time
+  `onPress` fires, the response is usually in flight or cached. A single **`fetchDedup`** map
+  coalesces the press-in prefetch, the following visit, and any background revalidate into one
+  request per URL. Prefetch is silent — a 409/error/network failure is swallowed, so a stray
+  press-in never fires `onUpdateRequired` or navigates.
+- **Warm `visit` navigates in the same frame.** On a cache hit, `visit` commits (mints key,
+  `setPage`, `router.apply`) **synchronously before any `await`**, so the native push starts the
+  frame of the tap. This is load-bearing on ordering — `commitPage` must precede any await on the
+  warm path (guarded by a unit test that calls `visit` without awaiting and asserts the nav
+  happened synchronously).
+- **Stale-while-revalidate.** A cache entry older than `revalidateAfterMs` (config, default 3000)
+  is served immediately *and* refreshed in the background; the fresh page is swapped into the live
+  screen via `setPage(key)` — the same in-place mechanism `reload` uses — with **no** second
+  navigation. Fresher entries are served without a refetch. `revalidate` deliberately does not
+  re-fire `onVersionDrift` (that hook means "the user hit a drifting page," not "a background
+  refresh saw drift").
+- **Cold cache** falls back to the current fetch-then-push, and `Link` dims (`busy`) while the GET
+  is in flight — the visible in-flight affordance.
+- **Invalidation:** any mutation (`visit` with a non-GET method) clears the URL cache — blunt but
+  never serves wrong data. Targeted invalidation is deferred to issue #2 (the back-nav staleness
+  it documents is the same family as the SWR flash-of-stale on repeat forward-nav).
+- **Memory:** the cache is a second unbounded map, capped by insertion-order eviction
+  (`maxCachedPages`, default 50). A full LRU / router-events GC is deferred to issue #8.
+
+No protocol/server change: prefetch is a plain GET; ETag/`Cache-Control`-driven TTLs are a
+follow-up (§4 stays as-is — this is a client-only layer).
+
 ## 7. What development feels like
 
 - **Data/flow change** (common case): edit a controller. Deploy the BFF. Every client —
@@ -350,9 +383,13 @@ npm run export -w apps/mobile   # Metro/Hermes bundle check without a device
 
 ## 11. Roadmap & open questions
 
+Done:
+- **Prefetch on press-in + URL cache with stale-while-revalidate** — the perceived-latency win
+  (issue #1). See §6.3. (Follow-ups: ETag/`Cache-Control` TTLs; LRU/GC eviction with issue #8;
+  targeted mutation invalidation with issue #2.)
+
 Near-term (spec exists in Inertia, port deliberately deferred):
 - Partial reloads (`X-Inertia-Partial-Data` analog) and deferred props — skeleton-then-fill.
-- Prefetch on press-in + page-object cache with stale-while-revalidate — kills perceived latency.
 - Polling (`usePoll`) for live server values — the read-side complement to the `action()`
   primitive (§6.2), which already covers in-place *writes* without navigation.
 - Cache-staleness mitigation for back-nav (reload-on-focus / server cache invalidation) — the

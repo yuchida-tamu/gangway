@@ -109,9 +109,10 @@ Any server-driven approach hits two walls; Gangway names them and owns them:
 
 Two mobile-specific caveats are accepted as scope, not treated as open problems:
 
-1. **Online-first only.** Every navigation is a round-trip (prefetch and
-   stale-while-revalidate are roadmap, [issue #1](https://github.com/yuchida-tamu/gangway/issues/1)).
-   Offline-first apps are out of scope.
+1. **Online-first only.** Every navigation is a round-trip. Perceived latency is cut by
+   **prefetch-on-press-in + stale-while-revalidate** (a warm screen pushes in the same frame;
+   see [client-core](./client-core.md#prefetch--stale-while-revalidate)), but offline-first
+   apps are still out of scope.
 2. **Version skew is permanent.** A mobile fleet always contains stale clients; the
    protocol is designed around that instead of pretending deploys are atomic.
 

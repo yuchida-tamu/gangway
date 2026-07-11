@@ -24,18 +24,23 @@ function page(over: Partial<PageObject> = {}): PageObject {
   }
 }
 
-function makeClient(fetchImpl: typeof fetch, bundleVersion = '1') {
+function makeClient(
+  fetchImpl: typeof fetch,
+  extra: Partial<{ bundleVersion: string; revalidateAfterMs: number; maxCachedPages: number }> = {},
+) {
   const nav: Array<{ action: string; key: string; url: string }> = []
   const drifts: string[] = []
   const updates: unknown[] = []
   const client = new GangwayClient({
     baseUrl: 'http://test',
-    bundleVersion,
+    bundleVersion: extra.bundleVersion ?? '1',
     runtimeVersion: 'rt',
     router: { apply: (action, key, url) => nav.push({ action, key, url }) },
     fetch: fetchImpl,
     onVersionDrift: (v) => drifts.push(v),
     onUpdateRequired: (i) => updates.push(i),
+    revalidateAfterMs: extra.revalidateAfterMs,
+    maxCachedPages: extra.maxCachedPages,
   })
   return { client, nav, drifts, updates }
 }
@@ -154,7 +159,7 @@ describe('visit', () => {
 
   it('fires onVersionDrift when the page version differs from the bundle', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ version: '2' })))
-    const { client, drifts } = makeClient(fetchImpl, '1')
+    const { client, drifts } = makeClient(fetchImpl, { bundleVersion: '1' })
 
     await client.visit('/')
 
@@ -295,5 +300,139 @@ describe('action', () => {
     const r = await client.action('/x')
 
     expect(r).toMatchObject({ ok: false, status: 0 })
+  })
+})
+
+// ---- prefetch + stale-while-revalidate (issue #1) --------------------------
+
+describe('prefetch', () => {
+  it('caches a URL without navigating', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ url: '/orders/1' })))
+    const { client, nav } = makeClient(fetchImpl)
+
+    await client.prefetch('/orders/1')
+
+    expect(nav).toHaveLength(0)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('is reused by a following visit (one network call total)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ url: '/orders/1' })))
+    const { client, nav } = makeClient(fetchImpl)
+
+    await client.prefetch('/orders/1')
+    const r = await client.visit('/orders/1')
+
+    expect(r.ok).toBe(true)
+    if (r.ok) expect(r.fromCache).toBe(true)
+    expect(nav).toHaveLength(1)
+    expect(fetchImpl).toHaveBeenCalledTimes(1) // visit served from cache, no refetch
+  })
+
+  it('dedups a concurrent prefetch + visit into one fetch', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((r) => {
+      release = r
+    })
+    const fetchImpl = vi.fn().mockImplementation(async () => {
+      await gate
+      return res(200, page({ url: '/orders/1' }))
+    })
+    const { client } = makeClient(fetchImpl)
+
+    const p = client.prefetch('/orders/1')
+    const v = client.visit('/orders/1') // in-flight → reuses the pending fetch
+    release()
+    await Promise.all([p, v])
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('swallows errors, 409, and network failures (no throw, no nav, no update prompt)', async () => {
+    for (const bad of [res(500, 'boom'), res(409, { updateRequired: true, minBundle: '2' })]) {
+      const fetchImpl = vi.fn().mockResolvedValue(bad)
+      const { client, nav, updates } = makeClient(fetchImpl)
+      await expect(client.prefetch('/x')).resolves.toBeUndefined()
+      expect(nav).toHaveLength(0)
+      expect(updates).toHaveLength(0)
+      // a following visit must NOT be served from the (empty) cache
+      const r = await client.visit('/x')
+      expect(r.ok === true && r.fromCache).not.toBe(true)
+    }
+    const netFail = vi.fn().mockRejectedValue(new Error('offline'))
+    const { client } = makeClient(netFail)
+    await expect(client.prefetch('/x')).resolves.toBeUndefined()
+  })
+})
+
+describe('visit — warm cache', () => {
+  it('navigates SYNCHRONOUSLY on a warm hit (same frame as the tap)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ url: '/orders/1' })))
+    const { client, nav } = makeClient(fetchImpl, { revalidateAfterMs: 60_000 })
+    await client.visit('/orders/1') // populate cache (cold)
+    const navLen = nav.length
+
+    // Second visit: do NOT await. router.apply must have already fired.
+    void client.visit('/orders/1')
+
+    expect(nav).toHaveLength(navLen + 1) // nav happened before the promise settled
+    expect(fetchImpl).toHaveBeenCalledTimes(1) // fresh entry → no refetch
+  })
+
+  it('marks a cache-served visit with fromCache', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ url: '/x' })))
+    const { client } = makeClient(fetchImpl, { revalidateAfterMs: 60_000 })
+    await client.visit('/x')
+    const r = await client.visit('/x')
+    expect(r.ok && r.fromCache).toBe(true)
+  })
+})
+
+describe('visit — stale-while-revalidate', () => {
+  it('serves stale immediately then swaps in the fresh page in place', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(res(200, page({ component: 'A', url: '/x' })))
+      .mockResolvedValueOnce(res(200, page({ component: 'B', url: '/x' })))
+    const { client, nav } = makeClient(fetchImpl, { revalidateAfterMs: 0 }) // always stale
+
+    await client.visit('/x') // cold → caches A, commits
+    const before = nav.length
+    const r = await client.visit('/x') // warm+stale → commits A now, revalidates
+    expect(r.ok && r.fromCache).toBe(true)
+    const key = r.ok ? r.key : ''
+    expect(client.getPage(key)?.component).toBe('A') // stale shown first
+
+    await vi.waitFor(() => expect(client.getPage(key)?.component).toBe('B')) // swapped in place
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(nav).toHaveLength(before + 1) // revalidate did NOT navigate
+  })
+})
+
+describe('visit — mutation invalidation & eviction', () => {
+  it('a mutation clears the URL cache', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(res(200, page({ url: '/orders' })))
+    const { client } = makeClient(fetchImpl, { revalidateAfterMs: 60_000 })
+
+    await client.visit('/orders') // caches /orders
+    await client.visit('/orders', { method: 'POST', data: {} }) // mutation → clear
+    const before = fetchImpl.mock.calls.length
+    await client.visit('/orders') // must refetch (cache cleared)
+
+    expect(fetchImpl.mock.calls.length).toBe(before + 1)
+  })
+
+  it('evicts the oldest entry past maxCachedPages', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (u: string) => res(200, page({ url: String(u) })))
+    const { client } = makeClient(fetchImpl, { revalidateAfterMs: 60_000, maxCachedPages: 2 })
+
+    await client.prefetch('/a')
+    await client.prefetch('/b')
+    await client.prefetch('/c') // evicts /a
+    const before = fetchImpl.mock.calls.length
+
+    await client.visit('/c') // warm
+    await client.visit('/a') // evicted → refetch
+    expect(fetchImpl.mock.calls.length).toBe(before + 1)
   })
 })

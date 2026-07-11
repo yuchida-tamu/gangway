@@ -14,6 +14,7 @@ export {
   useForm,
   useGangway,
   usePage,
+  usePrefetch,
   useVisit,
   type FallbackProps,
   type FallbackReason,
