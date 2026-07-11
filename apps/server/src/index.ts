@@ -8,6 +8,7 @@
  *   - version gate (409)                GET  /vip  (requires bundle >= 2)
  */
 import { Hono } from 'hono'
+import { logger } from 'hono/logger'
 import { serve } from '@hono/node-server'
 import { createGangway } from '@gangway/server'
 
@@ -47,6 +48,11 @@ export const gangway = createGangway<Pages>({
 })
 
 export const app = new Hono()
+
+// Request logging — handy when driving the app to see which visits reach the
+// BFF (forward nav) vs. which render from the client's page-object cache (back
+// nav produces no request).
+app.use(logger())
 
 app.get('/', (c) =>
   gangway.page(c, 'Home', {

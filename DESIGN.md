@@ -14,7 +14,7 @@ continue from here without the original conversation.
 
 ## 1. Status
 
-**Prototype / spike — protocol proven, on-device UX not yet exercised.**
+**Prototype / spike — protocol proven end-to-end, including a full on-device pass.**
 
 Verified so far (see §10 for how to re-run):
 
@@ -24,8 +24,28 @@ Verified so far (see §10 for how to re-run):
   303-redirect-follow after POST, 422 validation, back-nav cache, in-place reload,
   missing-component wall, 409 update gate, version-drift detection.
 - ✅ The Expo app bundles end-to-end through Metro/Hermes (`npm run export -w apps/mobile`).
-- ⬜ Not yet verified: actual simulator/device run (navigation feel, modal presentation,
-  back-gesture + cached page objects on screen), expo-updates wiring.
+- ✅ **Simulator pass (iOS, iPhone Air, Expo SDK 56 / Expo Go).** Every flow driven on
+  device and confirmed with screenshots + BFF request logs (2026-07-11):
+  - Cold boot → Home via the boot `visit('/', {intent:'replace'})`.
+  - Home → Orders push nav; order detail push nav (real BFF data rendered natively).
+  - Archive: POST → server 303 → list re-rendered with `replace`, archived order gone,
+    server state persisted.
+  - New order opens as a **native modal** purely from the server's `nav:{action:'modal'}`.
+  - Empty submit → **422**, stays on the form, inline field errors render.
+  - Valid submit → **303** → Orders/Show of the newly created order.
+  - **Back-nav renders from the client page-object store with zero BFF requests**
+    (verified against `hono/logger` output — forward navs log GETs, backs log nothing).
+  - Labs → **missing-component fallback**; VIP → **409 update-required fallback**.
+- ⚠️ **One real issue found — reload/cold-start store-vs-nav mismatch.** See §11 open
+  question #1; it is the top follow-up.
+- ⬜ Not yet exercised: expo-updates wiring (the fallback's "Check for update" is a no-op
+  in the demo), Android, real back-swipe gesture (button-back is verified).
+
+### 1.1 Toolchain note
+
+The app was migrated from Expo SDK 53 → **SDK 56** (`react-native` 0.85, `react` 19.2,
+`expo-router` ~56.2) so it runs on the simulator's installed Expo Go. Nothing in the
+framework packages needed to change for the bump — only `apps/mobile`.
 
 ## 2. Motivation & practicality assessment
 
@@ -265,13 +285,24 @@ Near-term (spec exists in Inertia, port deliberately deferred):
 - Prefetch on press-in + page-object cache with stale-while-revalidate — kills perceived latency.
 
 Open design questions:
-1. **Deep links / notifications:** OS link → server URL → page object → *reconstructed stack*
-   (native needs somewhere to go "back" to). Likely a server-provided stack hint on cold-start
-   visits, e.g. `{stack: ['/','/orders','/orders/42']}`.
+1. **Store-vs-nav rehydration — CONFIRMED ISSUE (top priority).** The page-object store lives
+   in memory in `GangwayClient`; navigation routes (`/s/<key>`, `/m/<key>`) hold only opaque
+   keys. When the JS reloads (dev Fast Refresh, a production OTA `reloadAsync()`, or a cold
+   start where the OS restores nav state) the store is wiped but Expo Router restores the old
+   routes → every restored screen resolves to a missing key → `<Fallback reason="missing-page">`.
+   Observed live during the simulator pass: editing a client file triggered a reload and the
+   restored modal route showed "This screen's data is no longer available." The same failure is
+   the deep-link / notification case (OS link → a route with no page object).
+   **Fix direction:** make routes carry their BFF URL, not just a key — e.g. navigate to
+   `/s/[key]` with the `url` as a param, and have `GangwayScreen` re-`visit(url)` to rehydrate
+   when the store misses. For a *stack* (not a single screen) the server likely provides a
+   cold-start stack hint, e.g. `{stack: ['/','/orders','/orders/42']}`, so back has somewhere to
+   go. This one change closes reload-recovery, cold-start, and deep-linking together.
 2. **Auth:** current assumption is token + fetch wrapper (client core accepts a custom `fetch`).
    Cookie-session support would unlock true Inertia-style flash/errors-on-redirect (§4.4).
-3. **Header/title control:** server should probably set screen titles (`props.title` +
-   `Stack.setOptions`) — small, high-value.
+3. **Header/title control:** confirmed needed in the pass — every screen's native header reads
+   "Gangway" (hardcoded in `_layout.tsx`), so the back button and title are identical across
+   screens. Server should set titles (`props.title` → `Stack.setOptions`) — small, high-value.
 4. **Scroll restoration** on back; **optimistic UI** for mutations; **WS transport** for
    Rise-style live props (protocol already isolates transport in `GangwayClient`).
 5. **Page-object GC:** the store currently grows with the session (fine for a prototype;

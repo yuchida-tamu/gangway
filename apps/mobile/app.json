@@ -16,6 +16,9 @@
     "android": {
       "package": "dev.yuchida.gangwaydemo"
     },
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      "expo-status-bar"
+    ]
   }
 }
