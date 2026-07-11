@@ -22,9 +22,11 @@ export const COMPONENT_UPDATE_REQUIRED = '@gangway/update-required'
 export interface RouterAdapter {
   /**
    * Place the screen identified by `key` into native navigation.
-   * The screen resolves its page object from the store via that key.
+   * The screen resolves its page object from the store via that key; `url`
+   * is the page's canonical BFF URL, carried in the route so the screen can
+   * re-fetch (rehydrate) if the in-memory store is later lost (§ rehydrate).
    */
-  apply(action: NavAction, key: string): void
+  apply(action: NavAction, key: string, url: string): void
 }
 
 export interface GangwayClientConfig {
@@ -58,10 +60,21 @@ export type VisitResult =
 
 type Listener = () => void
 
+type ParseResult =
+  | { kind: 'page'; page: PageObject }
+  | { kind: 'update-required'; info: UpdateRequired }
+  | { kind: 'validation'; errors: Errors }
+  | { kind: 'error'; status: number; message: string }
+
 export class GangwayClient {
   private pages = new Map<string, PageObject>()
   private listeners = new Map<string, Set<Listener>>()
   private seq = 0
+  /** Per-session prefix so keys minted after a JS reload can't collide with
+   *  keys embedded in routes that Expo Router restored from the old session. */
+  private readonly tag = mintTag()
+  /** Keys with a rehydrate() fetch in flight — makes rehydrate idempotent. */
+  private inflight = new Set<string>()
 
   constructor(private config: GangwayClientConfig) {}
 
@@ -94,92 +107,146 @@ export class GangwayClient {
    */
   async visit(url: string, opts: VisitOptions = {}): Promise<VisitResult> {
     const method = opts.method ?? 'GET'
-    const doFetch = this.config.fetch ?? fetch
-    let res: Response
-    try {
-      res = await doFetch(this.config.baseUrl + url, {
-        method,
-        headers: {
-          [HEADER_GANGWAY]: PROTOCOL_VERSION,
-          [HEADER_BUNDLE]: this.config.bundleVersion,
-          [HEADER_RUNTIME]: this.config.runtimeVersion,
-          ...(opts.data ? { 'Content-Type': 'application/json' } : {}),
-        },
-        ...(opts.data ? { body: JSON.stringify(opts.data) } : {}),
-      })
-    } catch (e) {
-      return { ok: false, kind: 'error', status: 0, message: String(e) }
-    }
+    const res = await this.request(url, method, opts.data)
+    if ('networkError' in res) return { ok: false, kind: 'error', status: 0, message: res.networkError }
+    const parsed = await this.parse(res)
 
-    if (res.status === 422) {
-      const body = (await res.json()) as { errors?: Errors }
-      return { ok: false, kind: 'validation', errors: body.errors ?? {} }
-    }
+    if (parsed.kind === 'validation') return { ok: false, kind: 'validation', errors: parsed.errors }
+    if (parsed.kind === 'error') return { ok: false, kind: 'error', status: parsed.status, message: parsed.message }
 
-    if (res.status === 409) {
-      const body = (await res.json().catch(() => ({}))) as unknown
-      const info: UpdateRequired = isUpdateRequired(body)
-        ? body
-        : { updateRequired: true, minBundle: 'unknown' }
-      this.config.onUpdateRequired?.(info)
+    if (parsed.kind === 'update-required') {
+      this.config.onUpdateRequired?.(parsed.info)
       // Navigate to a synthetic page so the fallback screen shows in place.
       const key = this.nextKey()
-      this.setPage(key, {
-        component: COMPONENT_UPDATE_REQUIRED,
-        props: { errors: {}, info },
-        url,
-        version: this.config.bundleVersion,
-      })
-      this.config.router.apply(opts.intent ?? 'push', key)
-      return { ok: false, kind: 'update-required', info }
+      this.setPage(key, this.updateRequiredPage(parsed.info, url))
+      this.config.router.apply(opts.intent ?? 'push', key, url)
+      return { ok: false, kind: 'update-required', info: parsed.info }
     }
 
-    if (!res.ok) {
-      return { ok: false, kind: 'error', status: res.status, message: await res.text() }
-    }
-
-    const body = (await res.json()) as unknown
-    if (!isPageObject(body)) {
-      return { ok: false, kind: 'error', status: res.status, message: 'Response is not a Gangway page object' }
-    }
-
-    if (body.version !== this.config.bundleVersion) {
-      this.config.onVersionDrift?.(body.version)
-    }
-
+    const { page } = parsed
+    if (page.version !== this.config.bundleVersion) this.config.onVersionDrift?.(page.version)
     const key = this.nextKey()
-    this.setPage(key, body)
+    this.setPage(key, page)
     // Server nav override wins; otherwise the intent the visit started with.
     // Mutations default to `replace` so back doesn't reopen a submitted form.
     const fallbackIntent: NavAction = method === 'GET' ? 'push' : 'replace'
-    const action = body.nav?.action ?? opts.intent ?? fallbackIntent
-    this.config.router.apply(action, key)
-    return { ok: true, page: body, key }
+    const action = page.nav?.action ?? opts.intent ?? fallbackIntent
+    // Carry the page's canonical URL (post-redirect) so the route can rehydrate.
+    this.config.router.apply(action, key, page.url)
+    return { ok: true, page, key }
   }
 
   /** Refetch a page in place (pull-to-refresh) without touching navigation. */
   async reload(key: string): Promise<VisitResult> {
     const current = this.pages.get(key)
     if (!current) return { ok: false, kind: 'error', status: 0, message: `No page for key ${key}` }
+    return this.load(key, current.url)
+  }
+
+  /**
+   * Repopulate the page for an already-mounted route `key` by re-fetching its
+   * `url`, WITHOUT navigating. Called by a screen whose store entry is gone —
+   * after a JS reload / OTA reloadAsync(), or a cold start where the OS
+   * restored navigation but not the in-memory store. Idempotent per key while
+   * a fetch is in flight, and a no-op if the page is already present.
+   */
+  async rehydrate(key: string, url: string): Promise<VisitResult> {
+    const existing = this.pages.get(key)
+    if (existing) return { ok: true, page: existing, key }
+    if (this.inflight.has(key)) {
+      return { ok: false, kind: 'error', status: 0, message: 'rehydrate already in flight' }
+    }
+    this.inflight.add(key)
+    try {
+      return await this.load(key, url)
+    } finally {
+      this.inflight.delete(key)
+    }
+  }
+
+  /** GET `url` and store the resulting page under `key`, without navigating.
+   *  Shared by reload() and rehydrate(). */
+  private async load(key: string, url: string): Promise<VisitResult> {
+    const res = await this.request(url)
+    if ('networkError' in res) return { ok: false, kind: 'error', status: 0, message: res.networkError }
+    const parsed = await this.parse(res)
+    switch (parsed.kind) {
+      case 'page':
+        if (parsed.page.version !== this.config.bundleVersion) this.config.onVersionDrift?.(parsed.page.version)
+        this.setPage(key, parsed.page)
+        return { ok: true, page: parsed.page, key }
+      case 'update-required':
+        this.config.onUpdateRequired?.(parsed.info)
+        this.setPage(key, this.updateRequiredPage(parsed.info, url))
+        return { ok: false, kind: 'update-required', info: parsed.info }
+      case 'validation':
+        return { ok: false, kind: 'validation', errors: parsed.errors }
+      case 'error':
+        return { ok: false, kind: 'error', status: parsed.status, message: parsed.message }
+    }
+  }
+
+  private async request(
+    url: string,
+    method: VisitOptions['method'] = 'GET',
+    data?: Record<string, unknown>,
+  ): Promise<Response | { networkError: string }> {
     const doFetch = this.config.fetch ?? fetch
-    const res = await doFetch(this.config.baseUrl + current.url, {
-      headers: {
-        [HEADER_GANGWAY]: PROTOCOL_VERSION,
-        [HEADER_BUNDLE]: this.config.bundleVersion,
-        [HEADER_RUNTIME]: this.config.runtimeVersion,
-      },
-    })
-    if (!res.ok) return { ok: false, kind: 'error', status: res.status, message: await res.text() }
+    try {
+      return await doFetch(this.config.baseUrl + url, {
+        method,
+        headers: {
+          [HEADER_GANGWAY]: PROTOCOL_VERSION,
+          [HEADER_BUNDLE]: this.config.bundleVersion,
+          [HEADER_RUNTIME]: this.config.runtimeVersion,
+          ...(data ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(data ? { body: JSON.stringify(data) } : {}),
+      })
+    } catch (e) {
+      return { networkError: String(e) }
+    }
+  }
+
+  /** Map an HTTP response to protocol data. No side effects (no store, no
+   *  navigation, no callbacks) — callers decide what to do with the outcome. */
+  private async parse(res: Response): Promise<ParseResult> {
+    if (res.status === 422) {
+      const body = (await res.json().catch(() => ({}))) as { errors?: Errors }
+      return { kind: 'validation', errors: body.errors ?? {} }
+    }
+    if (res.status === 409) {
+      const body = (await res.json().catch(() => ({}))) as unknown
+      const info: UpdateRequired = isUpdateRequired(body) ? body : { updateRequired: true, minBundle: 'unknown' }
+      return { kind: 'update-required', info }
+    }
+    if (!res.ok) {
+      return { kind: 'error', status: res.status, message: await res.text() }
+    }
     const body = (await res.json()) as unknown
     if (!isPageObject(body)) {
-      return { ok: false, kind: 'error', status: res.status, message: 'Response is not a Gangway page object' }
+      return { kind: 'error', status: res.status, message: 'Response is not a Gangway page object' }
     }
-    this.setPage(key, body)
-    return { ok: true, page: body, key }
+    return { kind: 'page', page: body }
+  }
+
+  private updateRequiredPage(info: UpdateRequired, url: string): PageObject {
+    return {
+      component: COMPONENT_UPDATE_REQUIRED,
+      props: { errors: {}, info },
+      url,
+      version: this.config.bundleVersion,
+    }
   }
 
   private nextKey(): string {
     this.seq += 1
-    return `g${this.seq}`
+    return `g${this.tag}_${this.seq}`
   }
+}
+
+/** Session-unique key prefix (base36 timestamp). Distinct per JS load, so
+ *  post-reload keys never collide with keys baked into restored routes. */
+function mintTag(): string {
+  return Math.floor(Date.now() % 0xffffff).toString(36)
 }

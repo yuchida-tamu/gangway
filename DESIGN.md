@@ -24,6 +24,12 @@ Verified so far (see §10 for how to re-run):
   303-redirect-follow after POST, 422 validation, back-nav cache, in-place reload,
   missing-component wall, 409 update gate, version-drift detection.
 - ✅ The Expo app bundles end-to-end through Metro/Hermes (`npm run export -w apps/mobile`).
+- ✅ **Route rehydration (the reload/cold-start fix).** Routes now carry the page URL; a
+  screen whose store entry was lost re-fetches in place. Verified on device: after a JS
+  reload of a 3-deep stack, all three screens self-healed (`GET /`, `/orders`, `/orders/1`
+  in the BFF log) and rendered real content instead of the missing-page fallback; back-nav
+  afterward was served from the rehydrated cache with zero further requests. Covered by e2e
+  scenarios 12–14. See §6.1.
 - ✅ **Simulator pass (iOS, iPhone Air, Expo SDK 56 / Expo Go).** Every flow driven on
   device and confirmed with screenshots + BFF request logs (2026-07-11):
   - Cold boot → Home via the boot `visit('/', {intent:'replace'})`.
@@ -36,10 +42,10 @@ Verified so far (see §10 for how to re-run):
   - **Back-nav renders from the client page-object store with zero BFF requests**
     (verified against `hono/logger` output — forward navs log GETs, backs log nothing).
   - Labs → **missing-component fallback**; VIP → **409 update-required fallback**.
-- ⚠️ **One real issue found — reload/cold-start store-vs-nav mismatch.** See §11 open
-  question #1; it is the top follow-up.
 - ⬜ Not yet exercised: expo-updates wiring (the fallback's "Check for update" is a no-op
-  in the demo), Android, real back-swipe gesture (button-back is verified).
+  in the demo), Android, real back-swipe gesture (button-back is verified), and a genuine
+  OS cold-start with restored nav (only the JS-reload analog was reproduced — same store-loss
+  path, so rehydration covers both, but the OS-restore route hasn't been driven directly).
 
 ### 1.1 Toolchain note
 
@@ -212,8 +218,35 @@ The Expo Router integration convention (`packages/client/src/expoRouterAdapter.t
   refetch on back**, matching native expectations. (Verified in e2e scenario 6; screen-level
   behavior still needs a simulator pass.)
 - `resetTo` = `dismissAll()` + `replace`. `reload(key)` refetches in place (pull-to-refresh).
-- Trade-off accepted for v0: router URLs are opaque keys, so OS-level deep links need a
-  mapping step (open question §11).
+
+### 6.1 Route rehydration (store-loss recovery)
+
+The store is in-memory; native routes outlive it. When the JS reloads (dev Fast Refresh, a
+production OTA `reloadAsync()`, or a cold start where the OS restores navigation) the store is
+empty but the routes come back. To keep restored routes from resolving to dead keys, each
+route carries **both** its key and the page's canonical URL:
+
+- The adapter navigates to `/s/[key]` (or `/m/[key]`) with `params: { key, u: page.url }`.
+  The URL used is the page object's `url` — i.e. the *post-redirect* URL after a 303 — so a
+  route created by a form POST rehydrates from the resource it landed on, not the POST target.
+- `GangwayScreen` reads `pageKey` + `url`. If the store has no page for `pageKey` **and** a
+  `url` is present, it calls `client.rehydrate(pageKey, url)` in an effect and renders
+  `<Fallback reason="rehydrating">` (a spinner, not an error) until the store fills. No `url`
+  (e.g. a synthetic route) → the terminal `missing-page` fallback.
+- `rehydrate(key, url)` GETs the URL and writes the page under the **existing** key **without
+  navigating** (unlike `visit`, which mints a new key and pushes). It is idempotent per key
+  (in-flight guard) and a no-op if the page is already present. A 409 during rehydrate stores
+  the update-required fallback under that same key, so a gated screen degrades in place.
+- Every screen in a restored stack rehydrates independently as it mounts, so the whole stack
+  self-heals; back-nav across already-rehydrated screens stays cache-only (no refetch).
+- **Key collisions across reloads** are prevented by seeding each key with a per-session tag
+  (`g<base36-time>_<seq>`). Without it, the `seq` counter resets to 1 on reload and a fresh
+  visit could overwrite a restored route's page under a colliding `g1`.
+
+This same mechanism is the basis for OS deep links / notifications (open question §11): an
+inbound URL becomes a route with a `u` param that rehydrates on arrival. What it does **not**
+yet do is reconstruct a *back stack* for a cold deep-link — that still needs a server stack
+hint (§11 #1).
 
 ## 7. What development feels like
 
@@ -285,19 +318,13 @@ Near-term (spec exists in Inertia, port deliberately deferred):
 - Prefetch on press-in + page-object cache with stale-while-revalidate — kills perceived latency.
 
 Open design questions:
-1. **Store-vs-nav rehydration — CONFIRMED ISSUE (top priority).** The page-object store lives
-   in memory in `GangwayClient`; navigation routes (`/s/<key>`, `/m/<key>`) hold only opaque
-   keys. When the JS reloads (dev Fast Refresh, a production OTA `reloadAsync()`, or a cold
-   start where the OS restores nav state) the store is wiped but Expo Router restores the old
-   routes → every restored screen resolves to a missing key → `<Fallback reason="missing-page">`.
-   Observed live during the simulator pass: editing a client file triggered a reload and the
-   restored modal route showed "This screen's data is no longer available." The same failure is
-   the deep-link / notification case (OS link → a route with no page object).
-   **Fix direction:** make routes carry their BFF URL, not just a key — e.g. navigate to
-   `/s/[key]` with the `url` as a param, and have `GangwayScreen` re-`visit(url)` to rehydrate
-   when the store misses. For a *stack* (not a single screen) the server likely provides a
-   cold-start stack hint, e.g. `{stack: ['/','/orders','/orders/42']}`, so back has somewhere to
-   go. This one change closes reload-recovery, cold-start, and deep-linking together.
+1. **Cold deep-link back-stack reconstruction** (the remaining half of the old store-vs-nav
+   issue; single-screen store-loss recovery is DONE — see §6.1). Rehydration heals whatever
+   routes the OS restored, but a *cold* deep link / notification tap opens a single route with
+   no stack beneath it, so "back" has nowhere to go. Fix direction: the server provides a
+   stack hint for cold-start entries, e.g. `{stack: ['/','/orders','/orders/42']}`, which the
+   adapter expands into a synthetic back stack (each entry a rehydratable `u` route). Until
+   then, a deep-linked screen rehydrates and renders fine but back may exit the app.
 2. **Auth:** current assumption is token + fetch wrapper (client core accepts a custom `fetch`).
    Cookie-session support would unlock true Inertia-style flash/errors-on-redirect (§4.4).
 3. **Header/title control:** confirmed needed in the pass — every screen's native header reads

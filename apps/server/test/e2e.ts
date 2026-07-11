@@ -18,11 +18,11 @@ const PORT = 4949
 const server = serve({ fetch: app.fetch, port: PORT })
 
 function makeClient(bundleVersion: string) {
-  const nav: Array<{ action: NavAction; key: string }> = []
+  const nav: Array<{ action: NavAction; key: string; url: string }> = []
   const drifts: string[] = []
   const updates: UpdateRequired[] = []
   const router: RouterAdapter = {
-    apply: (action, key) => nav.push({ action, key }),
+    apply: (action, key, url) => nav.push({ action, key, url }),
   }
   const client = new GangwayClient({
     baseUrl: `http://localhost:${PORT}`,
@@ -43,7 +43,7 @@ async function main() {
   assert(home.ok, 'home visit should succeed')
   assert.equal(home.page.component, 'Home')
   assert.equal((home.page.props as any).stats.open, 2)
-  assert.deepEqual(nav.at(-1), { action: 'replace', key: home.key })
+  assert.deepEqual(nav.at(-1), { action: 'replace', key: home.key, url: '/' })
 
   // 2. Link visit: defaults to push.
   const index = await client.visit('/orders')
@@ -114,7 +114,37 @@ async function main() {
   assert.equal(vipOk.page.component, 'Vip')
   assert.equal(fresh.drifts.length, 1, 'version drift callback should fire when bundle != server version')
 
-  console.log('✔ all 10 protocol scenarios passed')
+  // 11. Routes carry the page's canonical URL so they can rehydrate later.
+  //     After a mutation the URL is the post-redirect target, not the POST URL.
+  const createdNav = nav.find((n) => n.key === created.key)!
+  assert.equal(createdNav.url, created.page.url, 'router must receive the post-redirect URL')
+  assert.equal(createdNav.url, `/orders/${(created.page.props as any).order.id}`)
+
+  // 12. Rehydration after store loss. Simulate a JS reload / cold start: a
+  //     brand-new client (empty store) is handed a route key + URL that the OS
+  //     "restored", and must repopulate the store WITHOUT navigating.
+  const restored = makeClient('1')
+  const rehydrated = await restored.client.rehydrate('restored-key', '/orders')
+  assert(rehydrated.ok, 'rehydrate should fetch and store the page')
+  assert.equal(rehydrated.page.component, 'Orders/Index')
+  assert.equal(restored.client.getPage('restored-key')!.component, 'Orders/Index')
+  assert.equal(restored.nav.length, 0, 'rehydrate must not navigate')
+
+  // 13. Rehydrate is a no-op when the page is already present.
+  const again = await restored.client.rehydrate('restored-key', '/orders')
+  assert(again.ok)
+  assert.equal(restored.nav.length, 0)
+
+  // 14. Rehydrating a gated route (409) stores the update-required fallback
+  //     under the SAME key (no navigation), so the mounted screen flips to it.
+  const gatedReload = makeClient('1')
+  const gated = await gatedReload.client.rehydrate('vip-key', '/vip')
+  assert(!gated.ok && gated.kind === 'update-required')
+  assert.equal(gatedReload.client.getPage('vip-key')!.component, COMPONENT_UPDATE_REQUIRED)
+  assert.equal(gatedReload.nav.length, 0, 'rehydrate must not navigate even on 409')
+  assert.equal(gatedReload.updates.length, 1, 'onUpdateRequired should fire on rehydrate 409')
+
+  console.log('✔ all 14 protocol scenarios passed')
   server.close()
 }
 

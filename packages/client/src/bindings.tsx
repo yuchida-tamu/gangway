@@ -5,6 +5,7 @@ import React, {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   useSyncExternalStore,
@@ -18,7 +19,13 @@ import { COMPONENT_UPDATE_REQUIRED, GangwayClient, type VisitOptions, type Visit
  *  the component contract; its key set defines what this bundle can render. */
 export type ScreenRegistry = Record<string, ComponentType<any>>
 
-export type FallbackReason = 'missing-component' | 'update-required' | 'missing-page'
+export type FallbackReason =
+  | 'missing-component'
+  | 'update-required'
+  | 'missing-page'
+  /** Store entry lost (reload/cold-start) but the route knows its URL — a
+   *  rehydrate fetch is in flight. Render a spinner, not an error. */
+  | 'rehydrating'
 
 export interface FallbackProps {
   reason: FallbackReason
@@ -61,14 +68,25 @@ export function useGangway(): GangwayContextValue {
  * name against the registry. Host apps mount this in their catch-all routes
  * (app/s/[key].tsx and app/m/[key].tsx).
  */
-export function GangwayScreen({ pageKey }: { pageKey: string }) {
+export function GangwayScreen({ pageKey, url }: { pageKey: string; url?: string }) {
   const { client, registry, Fallback } = useGangway()
   const page = useSyncExternalStore(
     useCallback((cb) => client.subscribe(pageKey, cb), [client, pageKey]),
     () => client.getPage(pageKey),
   )
 
-  if (!page) return <Fallback reason="missing-page" />
+  // Store miss but the route carried its URL → the in-memory store was lost
+  // (JS reload / OTA / cold start with restored nav). Re-fetch in place.
+  useEffect(() => {
+    if (!page && url) void client.rehydrate(pageKey, url)
+  }, [page, url, pageKey, client])
+
+  if (!page) {
+    if (url) {
+      return <Fallback reason="rehydrating" retry={() => void client.rehydrate(pageKey, url)} />
+    }
+    return <Fallback reason="missing-page" />
+  }
   if (page.component === COMPONENT_UPDATE_REQUIRED) {
     return <Fallback reason="update-required" info={(page.props as any).info} />
   }
