@@ -281,6 +281,47 @@ scn_E2_cache_after_rehydrate() {
   if bff_no_reqs "$m"; then pass "E2 back after rehydrate served from cache"; else fail "E2 back issued a request"; fi
 }
 
+# G — the cost of cache-on-back: staleness. Documents a real UX limitation.
+scn_G1_stale_cache() {
+  step "G1 · stale cache on back (known limitation)"
+  ensure_bff >/dev/null 2>&1                 # reseed so order 1 is open
+  cold_boot >/dev/null 2>&1 || { fail "G1 cold boot"; return; }
+  press_until "View orders" "Aluminum extrusions" || { fail "G1 setup: reach Orders"; return; }
+  press_until "Aluminum extrusions" "Amount: ¥1,200" || { fail "G1 setup: reach detail"; return; }
+  # Archive → 303 → replace to a FRESH list (Aluminum gone). Confirm it's gone.
+  press_until "Archive" "New order" || { fail "G1 archive"; return; }
+  refute_text "Aluminum extrusions" || { fail "G1 fresh list still shows archived order"; return; }
+  # Press back → land on the ORIGINAL cached list, rendered from the store.
+  local m; m="$(bff_mark)"
+  press_back || { fail "G1 press back"; return; }
+  sleep 1
+  # The archived order is STILL visible (stale) AND no request was made. Both
+  # true = the cache-on-back win and its staleness cost, in one assertion.
+  if assert_text "Aluminum extrusions" 4000 && bff_no_reqs "$m"; then
+    pass "G1 back shows STALE cached list (archived order still visible, 0 requests)"
+  else
+    fail "G1 expected a stale cached list on back"
+  fi
+}
+
+# H — client-only animation: a tap-to-reveal that never touches the server.
+scn_H1_client_animation() {
+  step "H1 · client-only animation (tap-to-reveal, no server)"
+  ensure_bff >/dev/null 2>&1
+  cold_boot >/dev/null 2>&1 || { fail "H1 cold boot"; return; }
+  press_until "View orders" "Aluminum extrusions" || { fail "H1 setup: reach Orders"; return; }
+  press_until "Aluminum extrusions" "Amount: ¥1,200" || { fail "H1 setup: reach detail"; return; }
+  local m; m="$(bff_mark)"
+  # Reveal: animated section appears; then hide: it animates out and unmounts.
+  press_until "Show timeline" "Order timeline" || { fail "H1 reveal did not appear"; return; }
+  press_containing "Hide timeline" >/dev/null 2>&1; sleep 1
+  if refute_text "Order timeline" && bff_no_reqs "$m"; then
+    pass "H1 tap-to-reveal animates in/out with 0 server requests (pure client)"
+  else
+    fail "H1 reveal did not hide, or it hit the server"
+  fi
+}
+
 # ---- run ------------------------------------------------------------------
 echo "${YLW}=== Gangway on-device E2E ===${RST}"
 ensure_bff
@@ -289,7 +330,8 @@ cold_boot || { echo "${RED}cold boot failed — aborting${RST}"; exit 2; }
 
 # ONLY="A1 A2" limits the run to those scenarios (fast iteration); default = all.
 ALL_SCN=(A1_home A2_orders A3_detail B1_archive B2_modal B3_validation B4_create \
-         C1_cache D1_missing_component D2_update_required E1_rehydrate E2_cache_after_rehydrate)
+         C1_cache D1_missing_component D2_update_required E1_rehydrate E2_cache_after_rehydrate \
+         G1_stale_cache H1_client_animation)
 for s in "${ALL_SCN[@]}"; do
   if [[ -n "${ONLY:-}" ]]; then
     key="${s%%_*}"; [[ " $ONLY " == *" $key "* ]] || continue

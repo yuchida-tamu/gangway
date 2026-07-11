@@ -1,6 +1,6 @@
 /** Tiny shared UI vocabulary for the demo screens. */
-import React, { type ReactNode } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import React, { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native'
 
 export const colors = {
   bg: '#0f1115',
@@ -44,6 +44,40 @@ export function Button(props: { label: string; onPress: () => void; disabled?: b
     >
       <Text style={styles.buttonLabel}>{props.label}</Text>
     </Pressable>
+  )
+}
+
+/**
+ * Client-only reveal animation: fades + slides its children in/out when
+ * `visible` toggles. Pure React Native Animated (no native deps, no server) —
+ * demonstrates that Gangway screens can express real animations with zero
+ * framework involvement. Unmounts after the exit animation so the DOM is clean.
+ */
+export function Reveal({ visible, children }: { visible: boolean; children: ReactNode }) {
+  const v = useRef(new Animated.Value(visible ? 1 : 0)).current
+  const [mounted, setMounted] = useState(visible)
+
+  useEffect(() => {
+    if (visible) {
+      setMounted(true)
+      Animated.timing(v, { toValue: 1, duration: 220, useNativeDriver: true }).start()
+    } else {
+      Animated.timing(v, { toValue: 0, duration: 160, useNativeDriver: true }).start(({ finished }) => {
+        if (finished) setMounted(false)
+      })
+    }
+  }, [visible, v])
+
+  if (!mounted) return null
+  return (
+    <Animated.View
+      style={{
+        opacity: v,
+        transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [10, 0] }) }],
+      }}
+    >
+      {children}
+    </Animated.View>
   )
 }
 

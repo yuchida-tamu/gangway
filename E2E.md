@@ -203,6 +203,31 @@ agent-device snapshot -i        # if a dev menu shows, press its "Close"/"Contin
 - Expect: the archived row disappears without navigating. BFF: `GET /orders` → 200 under the
   **same** route (no push). Confirms `reload(key)` refetches in place.
 
+### Group G — Cache staleness on back (a real limitation, demonstrated)
+
+**G1. Back shows a stale cached screen** · _device-only; the cost of C1's cache-on-back win_
+- Pre: reseed the BFF; cold boot.
+- Do: View orders → open "Aluminum extrusions" → **Archive** (POST→303→**replace** to a fresh
+  list without it) → press **Back**.
+- Expect: you land on the *original* cached Orders list, which **still shows "Aluminum
+  extrusions"** even though it's archived, and the BFF gets **zero** requests. Both facts in one
+  assertion: back is served from the store (fast, native-feeling) *and* the store can be stale.
+- Why it's here: the harness celebrates C1 (back = 0 refetches); G1 is the honest flip side.
+  It's the regression target for any staleness mitigation we add (reload-on-focus, server cache
+  invalidation, `WhenVisible`/poll).
+
+### Group H — Client-only animation (no server state)
+
+**H1. Tap-to-reveal animates with zero server involvement** · _device-only_
+- Pre: on an order detail screen.
+- Do: tap **Show timeline** (an `Animated` fade+slide reveal in `ui.tsx`'s `<Reveal>`), then
+  **Hide timeline**.
+- Expect: "Order timeline" animates in and is visible; after Hide it animates out and unmounts;
+  the BFF gets **zero** requests across the whole interaction.
+- What E2E can and can't assert: it verifies the **end states** (revealed / hidden) and that the
+  animation is **pure client** (no requests) — it does **not** assert smoothness/fps/easing,
+  which snapshots can't see. "We can express animations" = confirmed; "it looks good" = eyeball it.
+
 ---
 
 ## 5. Smoke path (minimal ordered run)
