@@ -144,7 +144,17 @@ async function main() {
   assert.equal(gatedReload.nav.length, 0, 'rehydrate must not navigate even on 409')
   assert.equal(gatedReload.updates.length, 1, 'onUpdateRequired should fire on rehydrate 409')
 
-  console.log('✔ all 14 protocol scenarios passed')
+  // 15. In-place action: POST returns raw JSON, NO navigation, NO page store
+  //     change. The mechanism for server-state widgets (like/react/toggle).
+  const navBeforeAction = nav.length
+  const react1 = await client.action<{ reactions: number }>('/orders/1/react')
+  assert(react1.ok, 'action should succeed')
+  assert.equal(react1.data.reactions, 1)
+  assert.equal(nav.length, navBeforeAction, 'action must not navigate')
+  const react2 = await client.action<{ reactions: number }>('/orders/1/react')
+  assert(react2.ok && react2.data.reactions === 2, 'action increments server state across calls')
+
+  console.log('✔ all 15 protocol scenarios passed')
   server.close()
 }
 

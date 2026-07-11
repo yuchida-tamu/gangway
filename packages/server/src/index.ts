@@ -118,7 +118,17 @@ export function createGangway<Pages extends Record<string, object>>(config: Gang
     return updateRequired(c, { minBundle: min })
   }
 
-  return { page, redirect, errors, updateRequired, requireBundle, client, config }
+  /**
+   * Respond to an in-place action (client `action()`) with raw JSON — NOT a
+   * page object and NOT a redirect. The client merges this into local widget
+   * state without navigating. Use for like/react buttons, toggles, counters.
+   */
+  const data = (c: Context, payload: unknown): Response => {
+    c.header(HEADER_GANGWAY, PROTOCOL_VERSION)
+    return c.json(payload as Record<string, unknown>)
+  }
+
+  return { page, redirect, errors, updateRequired, requireBundle, data, client, config }
 }
 
 function compareVersions(a: string, b: string): number {

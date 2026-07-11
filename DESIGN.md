@@ -248,6 +248,35 @@ inbound URL becomes a route with a `u` param that rehydrates on arrival. What it
 yet do is reconstruct a *back stack* for a cold deep-link — that still needs a server stack
 hint (§11 #1).
 
+### 6.2 In-place actions (server state without navigation)
+
+The page-object model ties server data to navigation: `visit` fetches a page and navigates;
+`reload(key)` refetches the *current* page's URL in place. That covers reads and mutate-then-go
+flows, but not **widgets that write server state and update in place** — a like/react button, a
+status toggle, a counter — which must not trigger a navigation.
+
+The escape hatch is **`action(url, data?)`** on the client (hook: **`useAction()`**). It POSTs
+to a route and returns the server's **raw JSON** (`ActionResult<T>`) — it does **not** parse a
+page object, touch the page store, or call the router. The component owns the resulting state
+and animates on it. The server replies with **`gangway.data(c, payload)`** (plain JSON + the
+`X-Gangway` header), not `page()`/`redirect()`.
+
+```tsx
+const react = useAction<{ reactions: number }>()
+const [count, setCount] = useState(order.reactions)   // seeded from page props
+const onReact = async () => {
+  const r = await react.run(`/orders/${order.id}/react`)
+  if (r.ok) { setCount(r.data.reactions); /* animate the pulse */ }
+}
+```
+
+This is a deliberate **second data path** alongside visits (chosen over an Inertia-style
+in-place `preserveState` visit): a typed request/response for widget state, kept out of the
+page-object protocol so navigation semantics stay simple. Trade-off: state fetched via `action`
+lives in component state, so it is **not** part of the page-object cache — on back-navigation to
+a cached screen it shows whatever the page props held (see the staleness note, §11). For values
+that must survive back-nav, put them in page props and refresh via `reload`.
+
 ## 7. What development feels like
 
 - **Data/flow change** (common case): edit a controller. Deploy the BFF. Every client —
@@ -301,7 +330,7 @@ Publishing real npm packages will need a build step — irrelevant at this stage
 ```sh
 npm install
 npm run typecheck        # all workspaces
-npm run test:e2e         # 14-scenario protocol test (client core vs real BFF over HTTP)
+npm run test:e2e         # 15-scenario protocol test (client core vs real BFF over HTTP)
 npm run dev:server       # BFF on :3939 (open in a browser for the debug HTML view)
 npm run dev:mobile       # Expo dev server; press i for iOS simulator
 npm run export -w apps/mobile   # Metro/Hermes bundle check without a device
@@ -320,6 +349,10 @@ npm run export -w apps/mobile   # Metro/Hermes bundle check without a device
 Near-term (spec exists in Inertia, port deliberately deferred):
 - Partial reloads (`X-Inertia-Partial-Data` analog) and deferred props — skeleton-then-fill.
 - Prefetch on press-in + page-object cache with stale-while-revalidate — kills perceived latency.
+- Polling (`usePoll`) for live server values — the read-side complement to the `action()`
+  primitive (§6.2), which already covers in-place *writes* without navigation.
+- Cache-staleness mitigation for back-nav (reload-on-focus / server cache invalidation) — the
+  cost documented by device scenario G1.
 
 Open design questions:
 1. **Cold deep-link back-stack reconstruction** (the remaining half of the old store-vs-nav

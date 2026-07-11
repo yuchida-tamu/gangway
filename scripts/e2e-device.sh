@@ -116,6 +116,11 @@ ensure_metro() {
   until curl -s -m 2 "http://localhost:${METRO_PORT}/status" 2>/dev/null | grep -q "running"; do
     sleep 2; n=$((n+1)); [[ $n -gt 60 ]] && { echo "Metro never came up" >&2; exit 2; }
   done
+  # Warm the JS bundle NOW (Metro builds it fully) so the first cold_boot can't
+  # race a cold Metro and load a stale/half-built bundle after a code edit.
+  info "warming the JS bundle…"
+  curl -s -m 180 "http://localhost:${METRO_PORT}/node_modules/expo-router/entry.bundle?platform=ios&dev=true" -o /dev/null 2>/dev/null || true
+  METRO_STARTED=1
 }
 dismiss_dev_menu() {
   local r
@@ -136,9 +141,9 @@ attach_session() {
 cold_boot() {
   step "Cold-booting the app (fresh client store)"
   xcrun simctl terminate booted "$APP" >/dev/null 2>&1
-  sleep 2
+  sleep 3
   xcrun simctl openurl booted "$DEEP_LINK" >/dev/null 2>&1
-  sleep 6                       # let Expo Go relaunch and start bundling
+  sleep 6                       # let Expo Go relaunch and fetch the bundle
   attach_session || return 1
   # poll until Home renders or the Expo dev menu appears
   local n=0
@@ -322,6 +327,30 @@ scn_H1_client_animation() {
   fi
 }
 
+# I — in-place server action: a reaction counter that writes server state and
+# updates + animates WITHOUT navigating (the useAction / action() primitive).
+scn_I1_in_place_action() {
+  step "I1 · in-place server action (react counter, no navigation)"
+  ensure_bff >/dev/null 2>&1                 # reseed so order 1 reactions = 0
+  cold_boot >/dev/null 2>&1 || { fail "I1 cold boot"; return; }
+  press_until "View orders" "Aluminum extrusions" || { fail "I1 setup: reach Orders"; return; }
+  press_until "Aluminum extrusions" "Reactions: 0" || { fail "I1 setup: reach detail"; return; }
+  local m; m="$(bff_mark)"
+  press_containing "Add reaction" || { fail "I1 tap react"; return; }
+  sleep 1
+  # In place: count is now the server-confirmed 1, we're STILL on the detail
+  # (Archive visible), a POST /react happened, and NO page GET (no navigation).
+  if assert_text "Reactions: 1" 4000 && assert_text "Archive" 2000; then
+    if bff_saw "$m" "POST /orders/1/react" && ! bff_since "$m" | grep -qE "<-- GET "; then
+      pass "I1 action updated count in place (POST /react, no navigation)"
+    else
+      fail "I1 expected POST /react and no GET navigation"
+    fi
+  else
+    fail "I1 count did not update in place"
+  fi
+}
+
 # ---- run ------------------------------------------------------------------
 echo "${YLW}=== Gangway on-device E2E ===${RST}"
 ensure_bff
@@ -331,7 +360,7 @@ cold_boot || { echo "${RED}cold boot failed — aborting${RST}"; exit 2; }
 # ONLY="A1 A2" limits the run to those scenarios (fast iteration); default = all.
 ALL_SCN=(A1_home A2_orders A3_detail B1_archive B2_modal B3_validation B4_create \
          C1_cache D1_missing_component D2_update_required E1_rehydrate E2_cache_after_rehydrate \
-         G1_stale_cache H1_client_animation)
+         G1_stale_cache H1_client_animation I1_in_place_action)
 for s in "${ALL_SCN[@]}"; do
   if [[ -n "${ONLY:-}" ]]; then
     key="${s%%_*}"; [[ " $ONLY " == *" $key "* ]] || continue

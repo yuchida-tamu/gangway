@@ -1,6 +1,7 @@
 export {
   GangwayClient,
   COMPONENT_UPDATE_REQUIRED,
+  type ActionResult,
   type GangwayClientConfig,
   type RouterAdapter,
   type VisitOptions,
@@ -9,6 +10,7 @@ export {
 export {
   GangwayProvider,
   GangwayScreen,
+  useAction,
   useForm,
   useGangway,
   usePage,

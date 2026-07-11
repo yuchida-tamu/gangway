@@ -58,6 +58,11 @@ export type VisitResult =
   | { ok: false; kind: 'update-required'; info: UpdateRequired }
   | { ok: false; kind: 'error'; status: number; message: string }
 
+/** Result of an in-place action() — raw server data, no page/navigation. */
+export type ActionResult<T = unknown> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; message: string }
+
 type Listener = () => void
 
 type ParseResult =
@@ -162,6 +167,22 @@ export class GangwayClient {
     } finally {
       this.inflight.delete(key)
     }
+  }
+
+  /**
+   * Call a server route for a side-effect and fresh data, WITHOUT navigating,
+   * storing a page, or touching the router. Returns the server's raw JSON
+   * body. This is the escape hatch from the page-object model, for in-place
+   * widgets — like/react buttons, toggles, counters — that update local
+   * component state (and animate) without a navigation. Server responds with
+   * `gangway.data(c, payload)`.
+   */
+  async action<T = unknown>(url: string, data?: Record<string, unknown>): Promise<ActionResult<T>> {
+    const res = await this.request(url, 'POST', data ?? {})
+    if ('networkError' in res) return { ok: false, status: 0, message: res.networkError }
+    if (!res.ok) return { ok: false, status: res.status, message: await res.text() }
+    const body = (await res.json().catch(() => null)) as T
+    return { ok: true, data: body }
   }
 
   /** GET `url` and store the resulting page under `key`, without navigating.

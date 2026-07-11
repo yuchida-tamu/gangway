@@ -228,6 +228,18 @@ agent-device snapshot -i        # if a dev menu shows, press its "Close"/"Contin
   animation is **pure client** (no requests) — it does **not** assert smoothness/fps/easing,
   which snapshots can't see. "We can express animations" = confirmed; "it looks good" = eyeball it.
 
+### Group I — In-place server action (server state without navigation)
+
+**I1. Reaction counter writes server state without navigating** · _mirrors protocol #15_
+- Pre: reseed the BFF; cold boot; open an order detail (shows `Reactions: 0`).
+- Do: tap the **♥ / "Add reaction"** control.
+- Expect: the count becomes the **server-confirmed** `Reactions: 1` (the heart pulses via
+  `Animated`), you're **still on the detail** (Archive still visible), and the BFF log shows
+  `POST /orders/1/react` with **no page GET** — i.e. a real server write with **zero
+  navigation**. This is the `useAction()` / `action()` primitive: the escape hatch from the
+  page-object model for like/toggle/counter widgets. The animation is client-side; the value it
+  animates to comes from the server.
+
 ---
 
 ## 5. Smoke path (minimal ordered run)
@@ -257,3 +269,11 @@ pkill -f "tsx watch src/index.ts"; pkill -f "expo start"
   targets the wrong device, pass the udid of the actually-booted sim explicitly.
 - **Wrong-device taps:** confirm the booted device (`xcrun simctl list devices booted`) matches
   what agent-device drives; a mismatch makes taps silently miss.
+- **`accessibilityLabel` masks inner text:** a `Pressable` with an `accessibilityLabel` hides
+  its children's text from `snapshot`/`wait text`. Keep any text you need to assert (e.g. a
+  counter value) in a **sibling** node, not inside the labelled pressable (see the reaction
+  widget in `OrdersShow`).
+- **Stale JS after an edit:** a freshly-restarted Metro can serve a half-built bundle to the
+  first cold boot, running old code. The harness now **warms the bundle** (one `entry.bundle`
+  fetch) right after starting Metro. If you drive by hand after editing demo code, wait for
+  Metro's "Bundled" line before relaunching, or restart Metro.

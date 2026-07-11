@@ -13,7 +13,13 @@ import React, {
   type ReactNode,
 } from 'react'
 import type { Errors, PageObject, UpdateRequired } from '@gangway/protocol'
-import { COMPONENT_UPDATE_REQUIRED, GangwayClient, type VisitOptions, type VisitResult } from './core'
+import {
+  COMPONENT_UPDATE_REQUIRED,
+  GangwayClient,
+  type ActionResult,
+  type VisitOptions,
+  type VisitResult,
+} from './core'
 
 /** Screen registry: component name → React component. The client's half of
  *  the component contract; its key set defines what this bundle can render. */
@@ -117,6 +123,30 @@ export function usePage<P = Record<string, unknown>>() {
 export function useVisit() {
   const { client } = useGangway()
   return useCallback((url: string, opts?: VisitOptions) => client.visit(url, opts), [client])
+}
+
+/**
+ * In-place server action — the escape hatch from navigation. `run(url, data)`
+ * POSTs to a route and returns the server's raw JSON (via ActionResult); the
+ * component updates its own state and animates on the result, with no
+ * navigation and no page-store change. `pending` is true while in flight.
+ * For like/react buttons, toggles, counters, optimistic UI.
+ */
+export function useAction<T = unknown>() {
+  const { client } = useGangway()
+  const [pending, setPending] = useState(false)
+  const run = useCallback(
+    async (url: string, data?: Record<string, unknown>): Promise<ActionResult<T>> => {
+      setPending(true)
+      try {
+        return await client.action<T>(url, data)
+      } finally {
+        setPending(false)
+      }
+    },
+    [client],
+  )
+  return { run, pending }
 }
 
 /**

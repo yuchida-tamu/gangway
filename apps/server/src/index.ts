@@ -18,6 +18,7 @@ export interface Order {
   amount: number
   status: 'open' | 'archived'
   createdAt: string
+  reactions: number
 }
 
 /**
@@ -36,8 +37,8 @@ export type Pages = {
 
 // In-memory store; a real app would call into its domain layer here.
 const orders: Order[] = [
-  { id: 1, title: 'Aluminum extrusions', amount: 1200, status: 'open', createdAt: '2026-07-01' },
-  { id: 2, title: 'M5 hex bolts (x500)', amount: 89, status: 'open', createdAt: '2026-07-03' },
+  { id: 1, title: 'Aluminum extrusions', amount: 1200, status: 'open', createdAt: '2026-07-01', reactions: 0 },
+  { id: 2, title: 'M5 hex bolts (x500)', amount: 89, status: 'open', createdAt: '2026-07-03', reactions: 0 },
 ]
 let nextId = 3
 
@@ -91,6 +92,7 @@ app.post('/orders', async (c) => {
     amount: body.amount!,
     status: 'open',
     createdAt: new Date().toISOString().slice(0, 10),
+    reactions: 0,
   }
   orders.push(order)
   // Classic Inertia move: mutate, then 303 to the resulting resource.
@@ -102,6 +104,16 @@ app.post('/orders/:id/archive', (c) => {
   if (!order) return c.notFound()
   order.status = 'archived'
   return gangway.redirect(c, '/orders')
+})
+
+// In-place ACTION: increments a reaction and returns raw JSON — NO redirect,
+// NO page object. The client's action() consumes this to update a widget in
+// place without navigating (the mechanism for server-state animation).
+app.post('/orders/:id/react', (c) => {
+  const order = orders.find((o) => o.id === Number(c.req.param('id')))
+  if (!order) return c.notFound()
+  order.reactions += 1
+  return gangway.data(c, { reactions: order.reactions })
 })
 
 // The wall, on purpose: a screen the demo client does not register.
