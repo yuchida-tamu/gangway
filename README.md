@@ -8,6 +8,10 @@ app resolves the name against a registry of ordinary React Native screens and re
 > visual explainer with diagrams that render right here on GitHub. Skim the 2-minute pitch, or
 > expand any section for the architecture. Then **[DESIGN.md](./DESIGN.md)** is the full spec
 > (protocol, layer boundaries, version-skew strategy, roadmap).
+>
+> **User documentation lives in [docs/](./docs/README.md)** — getting started, concepts, and
+> per-module API references (protocol, server, client core, React bindings, navigation,
+> versioning).
 
 ## Quick start
 
