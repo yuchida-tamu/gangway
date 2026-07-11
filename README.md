@@ -4,10 +4,10 @@
 the app owns components. A BFF route returns `{component: "Orders/Show", props: {...}}`; the
 app resolves the name against a registry of ordinary React Native screens and renders natively.
 
-> 👉 **New here? Read [HOW-IT-WORKS.md](./HOW-IT-WORKS.md)** — a visual explainer with diagrams
-> that render right here on GitHub. Skim the 2-minute pitch, or expand any section for the
-> architecture. Then **[DESIGN.md](./DESIGN.md)** is the full spec (protocol, layer boundaries,
-> version-skew strategy, roadmap).
+> 👉 **New here? Read [HOW-IT-WORKS.md](./HOW-IT-WORKS.md)** ([日本語](./HOW-IT-WORKS.ja.md)) — a
+> visual explainer with diagrams that render right here on GitHub. Skim the 2-minute pitch, or
+> expand any section for the architecture. Then **[DESIGN.md](./DESIGN.md)** is the full spec
+> (protocol, layer boundaries, version-skew strategy, roadmap).
 
 ## Quick start
 

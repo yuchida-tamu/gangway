@@ -4,6 +4,8 @@
 
 # How Gangway works
 
+**English** | [日本語](./HOW-IT-WORKS.ja.md)
+
 **Gangway is [Inertia.js](https://inertiajs.com) for React Native.** Your **backend** decides
 which screen the user sees and hands it the data; your **app** just holds the screens and
 renders them natively. There's no REST/GraphQL API in between to design, version, or keep in
